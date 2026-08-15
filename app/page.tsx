@@ -132,7 +132,9 @@ export default function DashboardPage() {
                     {cat.label}
                   </span>
                   <span className="flex items-center gap-1 text-[10px] font-normal text-zinc-500">
-                    {countsLoading ? "…" : `${counts?.[cat.id] ?? 0} listings`}
+                    {countsLoading
+                      ? "…"
+                      : `${counts?.[cat.id] ?? 0} listing${counts?.[cat.id] === 1 ? "" : "s"}`}
                     <ChevronRight className="h-3 w-3" />
                   </span>
                 </Button>
