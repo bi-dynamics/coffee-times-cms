@@ -27,6 +27,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { db } from "@/lib/firebase";
 import { doc, addDoc, collection, updateDoc } from "firebase/firestore";
+import { describeFirestoreError } from "@/lib/firebase-error";
 import { useRouter } from "next/navigation";
 import { Trash2, Plus, Loader2 } from "lucide-react";
 import { ImageUpload } from "./image-upload";
@@ -43,34 +44,47 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
   const [loading, setLoading] = useState(false);
   const schema = schemas[category];
 
+  // Derived from the schema instead of a hand-maintained list of category names,
+  // which had to be updated by hand every time a category gained a field.
+  const schemaFields = schema.shape as Record<string, unknown>;
+  const hasServices = "services" in schemaFields;
+
+  // `any` mirrors the rest of this form: the schema is picked at runtime from a
+  // union of 22 zod schemas, so a literal object here would be narrowed to that
+  // union's intersection (images: never[], status: string) and fail to compile.
+  // Properly typing this needs a discriminated form component per category —
+  // see the notes in the review write-up.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const emptyValues: any = {
+    title: "",
+    description: "",
+    town: "",
+    suburb: "",
+    status: "draft",
+    images: [],
+    phone_number: "",
+    email_address: "",
+    website: "",
+    ...(category === "accomodations"
+      ? { bedrooms: 0, bathrooms: 0, features: [] }
+      : {}),
+    ...(hasServices ? { services: [] } : {}),
+    ...("note" in schemaFields ? { note: "" } : {}),
+  };
+
   const form = useForm({
     resolver: zodResolver(schema),
-    defaultValues: initialData || {
-      title: "",
-      description: "",
-      town: "",
-      suburb: "",
-      status: "draft",
-      images: [],
-      phone_number: "",
-      email_address: "",
-      website: "",
-      ...(category === "accomodations"
-        ? { bedrooms: 0, bathrooms: 0, features: [] }
-        : {}),
-      ...(category === "accounting" ||
-      category === "beauty" ||
-      category === "cleaning_services" ||
-      category === "electrical_devices" ||
-      category === "furniture_and_repairs" ||
-      category === "it_services" ||
-      category === "legal_services" ||
-      category === "mechanical_services" ||
-      category === "plumbing"
-        ? { services: [] }
-        : {}),
-      ...(category === "cleaning_services" ? { note: "" } : {}),
-    },
+    // Merge rather than replace: a Firestore document written before a field
+    // existed has no value for it, and passing `undefined` into a controlled
+    // input (or into ImageUpload's `value.map`) throws on the edit page.
+    defaultValues: initialData
+      ? {
+          ...emptyValues,
+          ...Object.fromEntries(
+            Object.entries(initialData).filter(([, v]) => v !== undefined && v !== null)
+          ),
+        }
+      : emptyValues,
   });
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,9 +102,9 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
         toast.success("Listing created successfully");
       }
       router.push(`/categories/${category}`);
-    } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    } catch (error) {
       console.error("Error saving listing:", error);
-      toast.error("Failed to save listing");
+      toast.error(describeFirestoreError(error));
     } finally {
       setLoading(false);
     }
@@ -294,9 +308,10 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
                               type="number"
                               className="border-zinc-800 bg-zinc-950 text-zinc-100"
                               {...field}
-                              onChange={(e) =>
-                                field.onChange(parseInt(e.target.value))
-                              }
+                              // Pass the raw string through; the schema coerces
+                              // it. parseInt("") returns NaN, which rendered as
+                              // "NaN" in the field when the input was cleared.
+                              onChange={(e) => field.onChange(e.target.value)}
                             />
                           </FormControl>
                           <FormMessage />
@@ -316,9 +331,10 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
                               type="number"
                               className="border-zinc-800 bg-zinc-950 text-zinc-100"
                               {...field}
-                              onChange={(e) =>
-                                field.onChange(parseInt(e.target.value))
-                              }
+                              // Pass the raw string through; the schema coerces
+                              // it. parseInt("") returns NaN, which rendered as
+                              // "NaN" in the field when the input was cleared.
+                              onChange={(e) => field.onChange(e.target.value)}
                             />
                           </FormControl>
                           <FormMessage />
@@ -328,7 +344,7 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
                   </div>
                 )}
 
-                {form.getValues("services") !== undefined && (
+                {hasServices && (
                   <FormField
                     control={form.control}
                     name="services"
@@ -338,7 +354,7 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
                           Services
                         </FormLabel>
                         <div className="space-y-2">
-                          {field.value.map((service: string, index: number) => (
+                          {(field.value ?? []).map((service: string, index: number) => (
                             <div key={index} className="flex gap-2">
                               <Input
                                 value={service}
@@ -412,11 +428,12 @@ export function ListingForm({ category, initialData, id }: ListingFormProps) {
                     <FormItem>
                       <FormControl>
                         <ImageUpload
-                          value={field.value}
+                          value={field.value ?? []}
+                          disabled={loading}
                           onChange={(urls: string[]) => field.onChange(urls)}
                           onRemove={(url: string) =>
                             field.onChange(
-                              field.value.filter((u: string) => u !== url)
+                              (field.value ?? []).filter((u: string) => u !== url)
                             )
                           }
                         />

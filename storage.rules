@@ -1,0 +1,68 @@
+rules_version = '2';
+
+// Coffee Times Cloud Storage rules.
+//
+// Deploy with:  firebase deploy --only storage
+//
+// Keep this file as the source of truth. Editing rules only in the Firebase
+// console is what allowed the CMS upload path to go unnoticed: the rules
+// granted writes to `businesses/{userId}/**` while the CMS has always uploaded
+// to `listings/...`, so every upload was denied with `storage/unauthorized`
+// and surfaced as "Failed to upload images".
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Reusable predicates -----------------------------------------------
+
+    // On a delete, `request.resource` is null, so the size/type checks must be
+    // skipped or the whole rule errors out and deletion is denied.
+    function isDelete() {
+      return request.resource == null;
+    }
+
+    function isValidImage() {
+      return request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // CMS listing images -------------------------------------------------
+    // Written by signed-in CMS admins. Public read, because the Ionic and React
+    // Native apps render these images without authenticating.
+    match /listings/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn() && (isDelete() || isValidImage());
+    }
+
+    // Category artwork ---------------------------------------------------
+    match /categories/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn() && (isDelete() || isValidImage());
+    }
+
+    // Advert images ------------------------------------------------------
+    match /ADS/{allPaths=**} {
+      allow read: if true;
+      allow write: if isSignedIn() && (isDelete() || isValidImage());
+    }
+
+    // Legacy Ionic app path ----------------------------------------------
+    // NOTE: this is currently `allow read, write: if true`, i.e. anyone on the
+    // internet can write to and delete from this prefix. It is left permissive
+    // here ONLY so that publishing this file cannot break the live app.
+    //
+    // TODO: confirm how the Ionic app authenticates, then tighten to:
+    //   allow write: if isSignedIn() && request.auth.uid == userId
+    //                && (isDelete() || isValidImage());
+    match /businesses/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Everything else is denied by default.
+  }
+}

@@ -49,6 +49,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { collection, deleteDoc, doc, getDocs, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { describeFirestoreError } from "@/lib/firebase-error";
 
 export default function CategoryPage() {
   const { category: categoryId } = useParams();
@@ -72,26 +73,16 @@ export default function CategoryPage() {
       if (!categoryId) return;
       setLoading(true);
       try {
-        console.log("Starting fetch for category:", categoryId as string);
-        const collectionRef = collection(db, categoryId as string);
-        console.log("Collection reference created:", collectionRef);
-        const q = query(collectionRef);
-        console.log("Query created, now calling getDocs...");
-
-        const querySnapshot = await getDocs(q);
-        console.log("Total docs found in snapshot:", querySnapshot.size);
-
-        const data = querySnapshot.docs.map((doc) => ({
-          ...doc.data(),
-          id: doc.id,
-        }));
-        console.log("Mapped data:", data);
-        setListings(data);
-      } catch (error: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
-        console.error("Firestore Error:", error);
-        console.error("Error message:", error.message);
-        console.error("Error code:", error.code);
-        toast.error(`Failed to load listings: ${error.message}`);
+        const querySnapshot = await getDocs(query(collection(db, categoryId as string)));
+        setListings(
+          querySnapshot.docs.map((doc) => ({
+            ...doc.data(),
+            id: doc.id,
+          }))
+        );
+      } catch (error) {
+        console.error(`Failed to load listings for "${categoryId}":`, error);
+        toast.error(describeFirestoreError(error));
       } finally {
         setLoading(false);
       }
@@ -106,8 +97,9 @@ export default function CategoryPage() {
       await deleteDoc(doc(db, categoryId as string, id));
       setListings((prev) => prev.filter((l) => l.id !== id));
       toast.success("Listing deleted successfully");
-    } catch {
-      toast.error("Failed to delete listing");
+    } catch (error) {
+      console.error(`Failed to delete listing "${id}":`, error);
+      toast.error(describeFirestoreError(error));
     }
   };
 
@@ -267,15 +259,11 @@ export default function CategoryPage() {
                           >
                             <DropdownMenuLabel>Actions</DropdownMenuLabel>
                             <DropdownMenuItem
-                              onClick={() => {
-                                console.log(
-                                  "Navigating to edit page for listing:",
-                                  listing.id
-                                );
+                              onClick={() =>
                                 router.push(
                                   `/categories/${categoryId}/${listing.id}`
-                                );
-                              }}
+                                )
+                              }
                             >
                               <Edit className="mr-2 h-4 w-4" />
                               Edit

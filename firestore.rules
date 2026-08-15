@@ -1,0 +1,104 @@
+rules_version = '2';
+
+// Coffee Times Cloud Firestore rules.
+//
+// Deploy with:  firebase deploy --only firestore:rules
+//
+// ---------------------------------------------------------------------------
+// What this replaces, and why
+// ---------------------------------------------------------------------------
+// Published 2025-10-28:
+//
+//   match /{document=**} {
+//     allow read: if true;
+//     allow write: if request.auth.token.admin;   // (1)
+//     allow delete: if false;                     // (2)
+//   }
+//
+// (1) `request.auth.token.admin` is a custom claim, settable only through the
+//     Firebase Admin SDK. It was never minted — the work was left unfinished in
+//     the Expo app — so this denied EVERY write to Firestore. That is the real
+//     scope of the reported bug: not just image uploads, but every listing
+//     create, edit and delete from the CMS.
+//
+// (2) Firestore rules are additive: `allow` grants and there is no `deny`. In
+//     rules_version 2 `write` already means create + update + delete, so
+//     `allow delete: if false` was a no-op and the rule above it had already
+//     granted deletes. The comment claimed the opposite of the behaviour.
+//
+// ---------------------------------------------------------------------------
+// Design notes
+// ---------------------------------------------------------------------------
+// * Admin status is a document in `admins/`, a collection no client can write.
+//   It is deliberately NOT `users/{uid}.role`: the Expo app's register.tsx
+//   writes that field client-side, so keying security off it would let any user
+//   promote themselves to Admin. `users.role` stays as-is for app UI only.
+//
+// * Every rule that matches a path is OR-ed together, so a catch-all
+//   `match /{collection}/{docId}` with `allow read: if true` would re-expose
+//   `users/` no matter what the dedicated block below says. The catch-all
+//   therefore excludes `users` and `admins` explicitly.
+//
+// * Public reads stay open for listing data, matching current behaviour — the
+//   Ionic and Expo apps read listings over anonymous auth. Reads of `users/`
+//   are newly restricted to the owner and admins; they were world-readable
+//   before, which exposed every registered user's email address.
+//
+// SETUP REQUIRED BEFORE DEPLOYING: create the `admins` collection with one
+// document per administrator, keyed by Auth UID. An empty body is fine — only
+// existence is checked. Without it, every write stays denied.
+// ---------------------------------------------------------------------------
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isSelf(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Admin roster. Never client-writable — grant and revoke from the Firebase
+    // console or the Admin SDK only.
+    match /admins/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // User profiles.
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+
+      // Signup may create the profile, but may not hand itself a privileged
+      // role. Anything other than 'User' has to be set by an admin.
+      allow create: if isSelf(uid)
+        && (!('role' in request.resource.data) || request.resource.data.role == 'User');
+
+      // The owner may edit their profile but not change their own role.
+      allow update: if isSelf(uid)
+        && request.resource.data.role == resource.data.role;
+
+      allow delete: if isAdmin();
+
+      // Admins may set roles and fix profiles.
+      allow write: if isAdmin();
+    }
+
+    // Everything else: listing categories plus the legacy `businesses`,
+    // `bussiness_services` and `reviews` collections.
+    //
+    // NOTE: writes to the legacy collections have been denied since 2025-10-28
+    // by the broken rule above, so the Ionic app has not been able to write
+    // reviews or business records since then. This file does not silently
+    // restore that — decide what those collections should allow and add
+    // explicit blocks for them.
+    match /{collection}/{docId} {
+      allow read: if !(collection in ['users', 'admins']);
+      allow create, update, delete: if isAdmin()
+        && !(collection in ['users', 'admins']);
+    }
+  }
+}

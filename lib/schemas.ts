@@ -17,11 +17,19 @@ const baseSchema = z.object({
   status: ListingStatus.default("draft"),
 });
 
+// Existing accommodation documents in Firestore store bedrooms/bathrooms as
+// strings — including empty strings — because they were written before this
+// schema existed. A plain z.number() rejects those on load, so editing any
+// older listing fails validation with "expected number, received string".
+// Coercing means old documents open cleanly and are rewritten as real numbers
+// on the next save, so the data self-heals without a migration.
+const countField = z.coerce.number().min(0).catch(0).default(0);
+
 // Category specific schemas
 export const schemas = {
   accomodations: baseSchema.extend({
-    bedrooms: z.number().min(0).default(0),
-    bathrooms: z.number().min(0).default(0),
+    bedrooms: countField,
+    bathrooms: countField,
     features: z.array(z.string()).default([]),
   }),
   accounting: baseSchema.extend({
