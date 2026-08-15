@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/components/auth-provider";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Separator } from "@/components/ui/separator";
@@ -14,12 +14,19 @@ import {
 } from "@/components/ui/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CATEGORIES } from "@/lib/schemas";
-import { Coffee, ListFilter, Plus } from "lucide-react";
+import { getListingCounts, type CategoryCounts } from "@/lib/listings";
+import { Coffee, ListFilter, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export default function DashboardPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+
+  const [counts, setCounts] = useState<CategoryCounts | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
+  const [countsLoading, setCountsLoading] = useState(true);
+  const [countsFailed, setCountsFailed] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -27,9 +34,45 @@ export default function DashboardPage() {
     }
   }, [user, loading, router]);
 
+  useEffect(() => {
+    if (!user) return;
+
+    let cancelled = false;
+
+    (async () => {
+      setCountsLoading(true);
+      try {
+        const result = await getListingCounts();
+        if (cancelled) return;
+        setCounts(result.counts);
+        setTotal(result.total);
+        if (result.failed.length > 0) {
+          setCountsFailed(true);
+          toast.error(
+            `Could not count listings for ${result.failed.length} categor${
+              result.failed.length === 1 ? "y" : "ies"
+            }. See the console for details.`
+          );
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to load listing counts:", error);
+        setCountsFailed(true);
+      } finally {
+        if (!cancelled) setCountsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
   if (loading || !user) {
     return null;
   }
+
+  const totalLabel = countsLoading ? "…" : countsFailed && total === null ? "—" : String(total ?? 0);
 
   return (
     <SidebarProvider>
@@ -63,24 +106,35 @@ export default function DashboardPage() {
                 <Coffee className="h-4 w-4 text-zinc-500" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">---</div>
-                <p className="text-xs text-zinc-500">Syncing with Firestore...</p>
+                <div className="text-2xl font-bold">{totalLabel}</div>
+                <p className="text-xs text-zinc-500">
+                  {countsLoading
+                    ? "Syncing with Firestore…"
+                    : countsFailed
+                      ? "Some categories could not be counted"
+                      : `Across ${CATEGORIES.length} categories`}
+                </p>
               </CardContent>
             </Card>
           </div>
 
           <div className="mt-8">
-            <h2 className="text-xl font-bold tracking-tight text-white mb-4">Quick Access</h2>
+            <h2 className="mb-4 text-xl font-bold tracking-tight text-white">Quick Access</h2>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-              {CATEGORIES.slice(0, 12).map((cat) => (
+              {CATEGORIES.map((cat) => (
                 <Button
                   key={cat.id}
                   variant="outline"
-                  className="h-24 flex flex-col gap-2 border-zinc-800 bg-zinc-900/50 hover:bg-zinc-900 hover:text-red-500 text-zinc-400 transition-all border-dashed"
+                  className="group h-24 flex-col justify-center gap-2 border-dashed border-zinc-800 bg-zinc-900/50 text-zinc-400 transition-all hover:bg-zinc-900 hover:text-red-500"
                   onClick={() => router.push(`/categories/${cat.id}`)}
                 >
-                  <span className="text-xs font-semibold uppercase tracking-wider">{cat.label}</span>
-                  <Plus className="h-4 w-4" />
+                  <span className="whitespace-normal px-1 text-center text-xs font-semibold uppercase leading-tight tracking-wider">
+                    {cat.label}
+                  </span>
+                  <span className="flex items-center gap-1 text-[10px] font-normal text-zinc-500">
+                    {countsLoading ? "…" : `${counts?.[cat.id] ?? 0} listings`}
+                    <ChevronRight className="h-3 w-3" />
+                  </span>
                 </Button>
               ))}
             </div>
