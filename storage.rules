@@ -21,8 +21,12 @@ service firebase.storage {
       return request.resource == null;
     }
 
+    // 25MB matches MAX_FILE_SIZE_MB in components/image-upload.tsx. The CMS
+    // offers to compress anything over 1MB before it is uploaded, but an admin
+    // may deliberately choose "Upload original" for artwork where fidelity
+    // matters — that must not then fail server-side. Keep the two in step.
     function isValidImage() {
-      return request.resource.size < 10 * 1024 * 1024
+      return request.resource.size < 25 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
 
@@ -51,16 +55,21 @@ service firebase.storage {
     }
 
     // Legacy Ionic app path ----------------------------------------------
-    // NOTE: this is currently `allow read, write: if true`, i.e. anyone on the
-    // internet can write to and delete from this prefix. It is left permissive
-    // here ONLY so that publishing this file cannot break the live app.
+    // This was `allow read, write: if true` — writable and deletable by anyone
+    // on the internet. On a Blaze plan the practical risk was bill inflation:
+    // a stranger could fill the bucket. Closed 2026-08-15.
     //
-    // TODO: confirm how the Ionic app authenticates, then tighten to:
+    // The prefix is empty (bucket top level holds only ADS/, accounting/,
+    // categories/ and listings/) and the CMS never writes here, so denying
+    // writes breaks nothing that currently works. Reads stay open in case the
+    // live Ionic app references old URLs.
+    //
+    // If the Ionic app does need to write here, scope it rather than reopening:
     //   allow write: if isSignedIn() && request.auth.uid == userId
     //                && (isDelete() || isValidImage());
     match /businesses/{userId}/{allPaths=**} {
       allow read: if true;
-      allow write: if true;
+      allow write: if false;
     }
 
     // Everything else is denied by default.
